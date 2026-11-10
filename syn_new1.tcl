@@ -1,11 +1,5 @@
-###################################################################
-# Optimized Synthesis Script (With Cache)
-# Target: SAED 14nm FinFET | Goal: Maximum Area & Leakage Recovery
-###################################################################
 
-# =================================================================
-# 1. Library Setup
-# =================================================================
+# Target: SAED 14nm FinFET 
 set_host_options -max_cores 4
 set DESIGN_REF_PATH "/home/synopsys/installs/LIBRARIES/SAED14_EDK"
 
@@ -35,9 +29,6 @@ set target_library $TARGET_LIBRARY_FILES
 
 set power_enable_analysis true
 
-# =================================================================
-# 2. Read RTL & Setup Environment
-# =================================================================
 analyze -library WORK -format verilog {
     ./icg_cell.v
     ./csa_15bit.v
@@ -51,14 +42,10 @@ elaborate reconfig_conv_core
 current_design reconfig_conv_core
 set_fix_multiple_port_nets -all -buffer_constants [get_designs reconfig_conv_core]
 
-# Apply constraints (1.75ns)
 source -echo ./con.sdc
 check_design
 link
 
-# =================================================================
-# 3. GDSII-Optimized Pre-Compile Setup
-# =================================================================
 set_operating_conditions -library saed14rvt_base_tt0p8v25c tt0p8v25c
 
 # Safe Multibit Mapping (Good for Power/Area, safe for ICC2 Routing)
@@ -74,9 +61,6 @@ set_max_capacitance 0.175 [current_design]
 set_app_var compile_limit_area_strategy true
 uniquify
 
-# =================================================================
-# 4. EXPLICIT CLOCK GATING HANDLING
-# =================================================================
 set_clock_gating_style -sequential_cell latch \
                        -positive_edge_logic {integrated} \
                        -control_point before \
@@ -87,16 +71,12 @@ identify_clock_gating
 # Ensure SAIF reads accurately to prevent default toggle inflation
 
 read_saif -input power_144bit_folded.saif -instance tb_power_eval_144bit_folded/u_dut
-# =================================================================
-# 5. The Main Compile (NO HOLD FIXING)
-# =================================================================
+
 compile_ultra -area_high_effort_script -gate_clock -retime
 compile_ultra -incremental -area_high_effort_script
 
 read_saif -input power_144bit_folded.saif -instance tb_power_eval_144bit_folded/u_dut
-# =================================================================
-# 6. Generate Reports
-# =================================================================
+
 change_names -rules verilog -verbose -hier
 
 report_area -hierarchy > area_report_with_cache_144_6.txt
@@ -106,9 +86,6 @@ report_timing -delay_type min > hold_timing_report_144_6.txt
 report_clock_gating > clock_gating_report_144_6.txt
 report_qor > qor_summary_144_6.txt
 
-# =================================================================
-# 7. Export Final Netlist
-# =================================================================
 write -f verilog -h -out ./reconfig_conv_core_gate_level_144_6.v
 write_sdc ./reconfig_conv_core_final_144_6.sdc
 
