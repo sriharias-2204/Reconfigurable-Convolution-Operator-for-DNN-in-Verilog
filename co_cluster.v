@@ -3,24 +3,16 @@
 module co_cluster (
     input  wire         clk, 
     input  wire         rst_n,
-    
-    // CONTROL
     input  wire         is_1x1,      // 1=1x1 Mode, 0=3x3/7x7 Mode
-    input  wire         in_valid,    // Start Transaction
-
-    // DATA
+    input  wire         in_valid,  
     input  wire [143:0] pixels,
     input  wire [143:0] weights,
-
-    // OUTPUTS
     output reg  [143:0] parallel_out, 
     output reg  [15:0]  summed_out,   
-    output wire         out_valid      // RESTORED: Single Valid Port
+    output wire         out_valid   
 );
 
-    // =========================================================
-    // OPTIMIZATION 1: Multiplier Array (Clock Gating + Operand Isolation)
-    // =========================================================
+    //Multiplier Array (Clock Gating + Operand Isolation)
     wire [15:0] p [0:8];
     genvar i;
     generate
@@ -32,7 +24,6 @@ module co_cluster (
             wire px_nonzero = |px[14:0];
             wire active = in_valid && px_nonzero;
 
-            // Clock Gating for Input Registers
             wire gclk_in;
             icg_cell u_icg (.clk(clk), .en(active), .gclk(gclk_in));
 
@@ -49,7 +40,7 @@ module co_cluster (
                 else stage1_valid <= active;
             end
 
-            // Operand Isolation: Force zeros when inactive to prevent stale data toggle
+            // Operand Isolation
             wire [15:0] px_iso = stage1_valid ? reg_px : 16'd0;
             wire [15:0] wt_iso = stage1_valid ? reg_wt : 16'd0;
 
@@ -60,9 +51,6 @@ module co_cluster (
         end
     endgenerate
 
-    // =========================================================
-    // 2. Dual Control Pipelines
-    // =========================================================
     reg [3:0] fast_valid_pipe;  
     reg [11:0] slow_valid_pipe; 
 
@@ -76,14 +64,9 @@ module co_cluster (
         end
     end
     
-    // RESTORED: Single combined valid signal
     assign out_valid = fast_valid_pipe[3] || slow_valid_pipe[11];
 
-    // =========================================================
-    // OPTIMIZATION 2: Fast Output (144-bit Bus Clock Gating)
-    // =========================================================
     wire gclk_par_out;
-    // Clock only ticks when we actually have valid 1x1 data to capture
     icg_cell u_icg_par (.clk(clk), .en(fast_valid_pipe[2]), .gclk(gclk_par_out));
     
     always @(posedge gclk_par_out or negedge rst_n) begin
@@ -91,9 +74,6 @@ module co_cluster (
         else parallel_out <= {p[8],p[7],p[6],p[5],p[4],p[3],p[2],p[1],p[0]};
     end
 
-    // =========================================================
-    // OPTIMIZATION 3: Adder Tree Operand Isolation
-    // =========================================================
     wire [15:0] adder_p [0:8];
     genvar j;
     generate
@@ -103,9 +83,6 @@ module co_cluster (
         end
     endgenerate
 
-    // =========================================================
-    // OPTIMIZATION 4: Shift Register Clock Gating
-    // =========================================================
     // Clock the 96 Flip-Flops ONLY if we are in 3x3 mode AND data is flowing
     wire shift_active = (!is_1x1) && (in_valid || |slow_valid_pipe[11:0]);
     wire gclk_shift;
@@ -114,7 +91,6 @@ module co_cluster (
     reg [15:0] p8_d [0:5];
     integer k;
     
-    // Driven by the killable clock
     always @(posedge gclk_shift or negedge rst_n) begin 
         if(!rst_n) for(k=0; k<6; k=k+1) p8_d[k] <= 0;
         else begin
@@ -123,12 +99,7 @@ module co_cluster (
         end
     end
 
-    // =========================================================
-    // 6. Slow Output (Adder Tree)
-    // =========================================================
     wire [15:0] s1 [0:3], s2 [0:1], s3, tree_final;
-    
-    // Adders are wired to the isolated 'adder_p' barrier wires
     add_bf16_pipelined a1_0 (.clk(clk), .rst_n(rst_n), .ce(shift_active), .c(adder_p[0]), .mul(adder_p[1]), .fma(s1[0]));
     add_bf16_pipelined a1_1 (.clk(clk), .rst_n(rst_n), .ce(shift_active), .c(adder_p[2]), .mul(adder_p[3]), .fma(s1[1]));
     add_bf16_pipelined a1_2 (.clk(clk), .rst_n(rst_n), .ce(shift_active), .c(adder_p[4]), .mul(adder_p[5]), .fma(s1[2]));
@@ -141,7 +112,6 @@ module co_cluster (
     
     add_bf16_pipelined a4_0 (.clk(clk), .rst_n(rst_n), .ce(shift_active), .c(s3), .mul(p8_d[5]), .fma(tree_final));
 
-    // Final Slow Path Register
     always @(posedge clk or negedge rst_n) begin
         if(!rst_n) summed_out <= 0;
         else begin
@@ -150,5 +120,3 @@ module co_cluster (
     end
 
 endmodule 
-
-
