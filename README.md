@@ -1,0 +1,1 @@
+# Reconfigurable-Convolution-Operator-for-DNN-in-Verilog
